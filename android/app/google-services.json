@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "827894264079",
+    "project_id": "tracebc-c6271",
+    "storage_bucket": "tracebc-c6271.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:827894264079:android:efd83a8d6b77d6648e8e7a",
+        "android_client_info": {
+          "package_name": "com.example.akses_tb"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHidfTU5r3jUEz0RncWnPwj1C3WIs9_xw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:827894264079:android:e9829feb6ea2adf08e8e7a",
+        "android_client_info": {
+          "package_name": "com.example.akses_tbcd"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDHidfTU5r3jUEz0RncWnPwj1C3WIs9_xw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
