@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../models/facility.dart';
+// Pastikan path ke service ini sesuai dengan di project kamu
 import '../../services/faskes_service.dart';
 
 // Bounding box for mapping coordinates to relative pixels on our vector abstract map of Surabaya
@@ -27,51 +28,38 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
+  final FacilityService _faskesService = FacilityService();
+
   GoogleMapController? _googleMapController;
   final TransformationController _transformationController = TransformationController();
-  
+
   late LatLng _currentCenter;
   late String _selectedTypeFilter; // 'Semua', 'Puskesmas', 'Rumah Sakit'
   late String _searchQuery;
 
   // Toggle between our gorgeous Interactive Vector Map (Default) and standard Google Maps
-  bool _useGoogleMaps = false; 
-  Facility? _selectedFacility;
+  bool _useGoogleMaps = false;
+  FaskesModel? _selectedFacility;
+
+  // Flag untuk memastikan fokus kamera hanya berjalan pada load pertama stream
+  bool _isFirstLoad = true;
 
   @override
   void initState() {
     super.initState();
     _selectedTypeFilter = 'Semua';
     _searchQuery = '';
-    
-    // Set initial center coordinates
+
+    // Set default initial center coordinates (jika data gagal dimuat)
     final double initialLat = widget.initialLat ?? -7.2650;
     final double initialLng = widget.initialLng ?? 112.7700;
     _currentCenter = LatLng(initialLat, initialLng);
-
-    // Load facilities from shared FaskesService
-    final facilities = FaskesService().getFacilities();
-
-    // If a specific facility was passed to highlight, pre-select it
-    if (widget.highlightName != null) {
-      final match = facilities.firstWhere(
-        (f) => f.name.toLowerCase().contains(widget.highlightName!.toLowerCase()),
-        orElse: () => facilities.first,
-      );
-      _selectedFacility = match;
-    } else {
-      _selectedFacility = facilities.isNotEmpty ? facilities.first : null;
-    }
-
-    // Scroll Transformation Controller to center on initial location in Vector Map
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _centerVectorMap(initialLat, initialLng);
-    });
   }
 
   @override
   void dispose() {
     _transformationController.dispose();
+    _googleMapController?.dispose();
     super.dispose();
   }
 
@@ -87,39 +75,23 @@ class _MapScreenState extends State<MapScreen> {
     return ratio.clamp(0.0, 1.0) * height;
   }
 
-  // Animate the custom vector map coordinate to center (with zero warnings)
+  // Animate the custom vector map coordinate to center
   void _centerVectorMap(double lat, double lng) {
     const double mapSize = 800.0;
     final double x = _getX(lng, mapSize);
     final double y = _getY(lat, mapSize);
-    
-    // Calculate translate offset to center screen (assuming 360 width, 400 height map view viewport)
+
     final double screenW = MediaQuery.of(context).size.width;
     final double screenH = MediaQuery.of(context).size.height * 0.55;
-    
+
     final double offsetX = (screenW / 2) - x;
     final double offsetY = (screenH / 2) - y;
 
-    // Use warning-free direct entry configuration to avoid deprecated Matrix4.translate & Matrix4.scale
     _transformationController.value = Matrix4.identity()
       ..setEntry(0, 0, 1.2) // scaleX
       ..setEntry(1, 1, 1.2) // scaleY
       ..setEntry(0, 3, offsetX) // translateX
       ..setEntry(1, 3, offsetY); // translateY
-  }
-
-  // List of filtered facilities loaded from FaskesService
-  List<Facility> get _filteredFacilities {
-    final facilities = FaskesService().getFacilities();
-    return facilities.where((f) {
-      final matchesSearch = f.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          f.address.toLowerCase().contains(_searchQuery.toLowerCase());
-      
-      final matchesType = _selectedTypeFilter == 'Semua' ||
-          (f.type == _selectedTypeFilter);
-
-      return matchesSearch && matchesType;
-    }).toList();
   }
 
   // Animate Google Map camera
@@ -132,7 +104,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   // Handle facility card selection
-  void _onFacilitySelected(Facility facility) {
+  void _onFacilitySelected(FaskesModel facility) {
     setState(() {
       _selectedFacility = facility;
       _currentCenter = LatLng(facility.latitude, facility.longitude);
@@ -164,7 +136,6 @@ class _MapScreenState extends State<MapScreen> {
           style: TextStyle(color: Color(0xFF007B7A), fontWeight: FontWeight.bold, fontSize: 18),
         ),
         actions: [
-          // Elegant toggle between vector map and satellite map
           IconButton(
             tooltip: _useGoogleMaps ? 'Gunakan Peta Interaktif' : 'Gunakan Google Maps',
             icon: Icon(
@@ -175,7 +146,6 @@ class _MapScreenState extends State<MapScreen> {
               setState(() {
                 _useGoogleMaps = !_useGoogleMaps;
               });
-              // Animate after state builds
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (_useGoogleMaps) {
                   _centerGoogleMap(_currentCenter.latitude, _currentCenter.longitude);
@@ -188,178 +158,225 @@ class _MapScreenState extends State<MapScreen> {
         ],
       ),
 
-      body: Stack(
-        children: [
-          // --- LAYER 1: MAPS LAYER (CHOSEN MODE) ---
-          SizedBox(
-            height: viewportHeight,
-            child: _useGoogleMaps 
-                ? _buildGoogleMapsView() 
-                : _buildInteractiveVectorMapView(),
-          ),
+      // StreamBuilder untuk membaca data Real-time
+      body: StreamBuilder<List<FaskesModel>>(
+        stream: _faskesService.streamFacilities(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator(color: Color(0xFF007B7A)));
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text('Terjadi kesalahan muat peta: ${snapshot.error}'));
+          }
 
-          // --- LAYER 2: Zoom/Map Mode indicator chip ---
-          Positioned(
-            top: 14,
-            left: 14,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color.fromRGBO(255, 255, 255, 0.92),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    _useGoogleMaps ? Icons.satellite : Icons.map,
-                    size: 14,
-                    color: const Color(0xFF007B7A),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _useGoogleMaps ? 'Mode Google Maps' : 'Peta Vektor Pintar (Aktif)',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0F172A),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          final allFacilities = snapshot.data ?? [];
 
-          // --- LAYER 3: Panel Faskes Terdekat (Draggable Sheet) ---
-          DraggableScrollableSheet(
-            initialChildSize: 0.44,
-            minChildSize: 0.18,
-            maxChildSize: 0.9,
-            builder: (BuildContext context, ScrollController scrollController) {
-              return Container(
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Color.fromRGBO(0, 0, 0, 0.06),
-                      blurRadius: 16,
-                      spreadRadius: 1,
-                    )
-                  ],
-                ),
-                child: ListView(
-                  controller: scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  children: [
-                    // Pull Handle bar
-                    Center(
-                      child: Container(
-                        width: 44,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade300,
-                          borderRadius: BorderRadius.circular(10),
+          // Logika First Load: Memilih highlight faskes dan memusatkan kamera HANYA saat data pertama kali masuk
+          if (_isFirstLoad && allFacilities.isNotEmpty) {
+            if (widget.highlightName != null) {
+              _selectedFacility = allFacilities.firstWhere(
+                    (f) => f.name.toLowerCase().contains(widget.highlightName!.toLowerCase()),
+                orElse: () => allFacilities.first,
+              );
+            } else {
+              _selectedFacility = allFacilities.first;
+            }
+
+            _currentCenter = LatLng(_selectedFacility!.latitude, _selectedFacility!.longitude);
+
+            // Pusatkan peta setelah frame selesai di-render
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (_useGoogleMaps) {
+                _centerGoogleMap(_currentCenter.latitude, _currentCenter.longitude);
+              } else {
+                _centerVectorMap(_currentCenter.latitude, _currentCenter.longitude);
+              }
+            });
+            _isFirstLoad = false;
+          }
+
+          // Pemfilteran List Berdasarkan Pencarian dan Chip
+          final filteredFacilities = allFacilities.where((f) {
+            final matchesSearch = f.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                f.address.toLowerCase().contains(_searchQuery.toLowerCase());
+            final matchesType = _selectedTypeFilter == 'Semua' || (f.type == _selectedTypeFilter);
+            return matchesSearch && matchesType;
+          }).toList();
+
+          return Stack(
+            children: [
+              // --- LAYER 1: MAPS LAYER (CHOSEN MODE) ---
+              SizedBox(
+                height: viewportHeight,
+                child: _useGoogleMaps
+                    ? _buildGoogleMapsView(allFacilities)
+                    : _buildInteractiveVectorMapView(allFacilities),
+              ),
+
+              // --- LAYER 2: Zoom/Map Mode indicator chip ---
+              Positioned(
+                top: 14,
+                left: 14,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color.fromRGBO(255, 255, 255, 0.92),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _useGoogleMaps ? Icons.satellite : Icons.map,
+                        size: 14,
+                        color: const Color(0xFF007B7A),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _useGoogleMaps ? 'Mode Google Maps' : 'Peta Vektor Pintar (Aktif)',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F172A),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 20),
+                    ],
+                  ),
+                ),
+              ),
 
-                    // Header Row with Filter Chip Switcher
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
-                            Text(
-                              'Faskes Terdekat',
-                              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Surabaya & Sekitarnya',
-                              style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
-                            ),
-                          ],
-                        ),
-                        // Quick filter button
-                        TextButton.icon(
-                          onPressed: () => _showFilterDialog(),
-                          icon: const Icon(Icons.filter_alt_outlined, color: Color(0xFF007B7A), size: 16),
-                          label: Text(
-                            _selectedTypeFilter == 'Semua' ? 'Filter' : _selectedTypeFilter,
-                            style: const TextStyle(color: Color(0xFF007B7A), fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
+              // --- LAYER 3: Panel Faskes Terdekat (Draggable Sheet) ---
+              DraggableScrollableSheet(
+                initialChildSize: 0.44,
+                minChildSize: 0.18,
+                maxChildSize: 0.9,
+                builder: (BuildContext context, ScrollController scrollController) {
+                  return Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Color.fromRGBO(0, 0, 0, 0.06),
+                          blurRadius: 16,
+                          spreadRadius: 1,
                         )
                       ],
                     ),
-                    const SizedBox(height: 12),
-
-                    // Search input
-                    Container(
-                      height: 44,
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: TextField(
-                        onChanged: (val) {
-                          setState(() {
-                            _searchQuery = val;
-                          });
-                        },
-                        decoration: const InputDecoration(
-                          hintText: 'Cari faskes atau kecamatan...',
-                          hintStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
-                          prefixIcon: Icon(Icons.search, color: Color(0xFF94A3B8), size: 18),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(vertical: 11),
-                        ),
-                      ),
-                    ),
-
-                    // Facility Cards Mapping
-                    _filteredFacilities.isEmpty
-                        ? const Center(
-                            child: Padding(
-                              padding: EdgeInsets.all(40.0),
-                              child: Text('Tidak ada Faskes ditemukan'),
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      children: [
+                        // Pull Handle bar
+                        Center(
+                          child: Container(
+                            width: 44,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade300,
+                              borderRadius: BorderRadius.circular(10),
                             ),
-                          )
-                        : Column(
-                            children: _filteredFacilities.map((faskes) {
-                              final isSelected = _selectedFacility?.id == faskes.id;
-                              return InkWell(
-                                onTap: () => _onFacilitySelected(faskes),
-                                borderRadius: BorderRadius.circular(16),
-                                child: Container(
-                                  margin: const EdgeInsets.only(bottom: 14.0),
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: isSelected ? const Color(0xFF007B7A) : Colors.grey.shade200,
-                                      width: isSelected ? 2.0 : 1.0,
-                                    ),
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: _buildFacilityCard(faskes),
-                                ),
-                              );
-                            }).toList(),
                           ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
+                        ),
+                        const SizedBox(height: 20),
+
+                        // Header Row with Filter Chip Switcher
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: const [
+                                Text(
+                                  'Faskes Terdekat',
+                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'Surabaya & Sekitarnya',
+                                  style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                                ),
+                              ],
+                            ),
+                            // Quick filter button
+                            TextButton.icon(
+                              onPressed: () => _showFilterDialog(),
+                              icon: const Icon(Icons.filter_alt_outlined, color: Color(0xFF007B7A), size: 16),
+                              label: Text(
+                                _selectedTypeFilter == 'Semua' ? 'Filter' : _selectedTypeFilter,
+                                style: const TextStyle(color: Color(0xFF007B7A), fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                            )
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Search input
+                        Container(
+                          height: 44,
+                          margin: const EdgeInsets.only(bottom: 16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: TextField(
+                            onChanged: (val) {
+                              setState(() {
+                                _searchQuery = val;
+                              });
+                            },
+                            decoration: const InputDecoration(
+                              hintText: 'Cari faskes atau kecamatan...',
+                              hintStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                              prefixIcon: Icon(Icons.search, color: Color(0xFF94A3B8), size: 18),
+                              border: InputBorder.none,
+                              contentPadding: EdgeInsets.symmetric(vertical: 11),
+                            ),
+                          ),
+                        ),
+
+                        // Facility Cards Mapping
+                        filteredFacilities.isEmpty
+                            ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(40.0),
+                            child: Text('Tidak ada Faskes ditemukan'),
+                          ),
+                        )
+                            : Column(
+                          children: filteredFacilities.map((faskes) {
+                            final isSelected = _selectedFacility?.id == faskes.id;
+                            return InkWell(
+                              onTap: () => _onFacilitySelected(faskes),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 14.0),
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: isSelected ? const Color(0xFF007B7A) : Colors.grey.shade200,
+                                    width: isSelected ? 2.0 : 1.0,
+                                  ),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: _buildFacilityCard(faskes),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  // A. GOOGLE MAPS BUILDER (SAFE AND ROBUST)
-  Widget _buildGoogleMapsView() {
+  // A. GOOGLE MAPS BUILDER (Menggunakan parameter facilities dari Stream)
+  Widget _buildGoogleMapsView(List<FaskesModel> facilities) {
     final bool isMobile = !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
     if (!isMobile) {
       return Container(
@@ -397,8 +414,6 @@ class _MapScreenState extends State<MapScreen> {
       );
     }
 
-    final facilities = FaskesService().getFacilities();
-
     return GoogleMap(
       initialCameraPosition: CameraPosition(
         target: _currentCenter,
@@ -406,7 +421,10 @@ class _MapScreenState extends State<MapScreen> {
       ),
       onMapCreated: (GoogleMapController controller) {
         _googleMapController = controller;
-        _centerGoogleMap(_currentCenter.latitude, _currentCenter.longitude);
+        // Opsional: jika ingin menengahkan ulang saat map dibuat
+        if (!_isFirstLoad) {
+          _centerGoogleMap(_currentCenter.latitude, _currentCenter.longitude);
+        }
       },
       markers: facilities.map((faskes) {
         final isSelected = _selectedFacility?.id == faskes.id;
@@ -420,6 +438,9 @@ class _MapScreenState extends State<MapScreen> {
           icon: BitmapDescriptor.defaultMarkerWithHue(
             isSelected ? BitmapDescriptor.hueRed : BitmapDescriptor.hueBlue,
           ),
+          onTap: () {
+            _onFacilitySelected(faskes);
+          },
         );
       }).toSet(),
       zoomControlsEnabled: false,
@@ -427,10 +448,9 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // B. HIGH-FIDELITY VECTOR MAP BUILDER (STUNNING ZERO-API FALLBACK VIEW)
-  Widget _buildInteractiveVectorMapView() {
+  // B. HIGH-FIDELITY VECTOR MAP BUILDER (Menggunakan parameter facilities dari Stream)
+  Widget _buildInteractiveVectorMapView(List<FaskesModel> facilities) {
     const double mapSize = 800.0;
-    final facilities = FaskesService().getFacilities();
 
     return Container(
       color: const Color(0xFFE2F3F3), // stylized soft teal grid background
@@ -441,13 +461,11 @@ class _MapScreenState extends State<MapScreen> {
           minScale: 0.5,
           child: Stack(
             children: [
-              // Beautiful stylized streets, blocks, and river painting
               CustomPaint(
                 size: const Size(mapSize, mapSize),
                 painter: SurabayaStreetPainter(),
               ),
 
-              // Positioned pin markers dynamically mapped on the vector layout
               ...facilities.map((faskes) {
                 final double x = _getX(faskes.longitude, mapSize);
                 final double y = _getY(faskes.latitude, mapSize);
@@ -488,8 +506,7 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // Facility Card details
-  Widget _buildFacilityCard(Facility faskes) {
+  Widget _buildFacilityCard(FaskesModel faskes) {
     final isRS = faskes.type == 'Rumah Sakit';
 
     return Padding(
@@ -661,32 +678,27 @@ class SurabayaStreetPainter extends CustomPainter {
       ..strokeWidth = 4.0
       ..strokeCap = StrokeCap.round;
 
-    // Draw background block grid squares
     const double step = 80.0;
     for (double i = 0; i < size.width; i += step) {
       canvas.drawLine(Offset(i, 0), Offset(i, size.height), gridPaint);
       canvas.drawLine(Offset(0, i), Offset(size.width, i), gridPaint);
     }
 
-    // Draw Kalimas River flow curving through abstract Surabaya layout
     final riverPath = Path()
       ..moveTo(200, 0)
       ..cubicTo(260, 200, 160, 400, 320, 600)
       ..lineTo(220, 800);
     canvas.drawPath(riverPath, riverPaint);
 
-    // Draw Main Primary Highways
-    canvas.drawLine(const Offset(0, 300), const Offset(800, 340), primaryStreetPaint); // Highway A
-    canvas.drawLine(const Offset(400, 0), const Offset(360, 800), primaryStreetPaint); // Highway B
-    canvas.drawLine(const Offset(100, 100), const Offset(700, 700), primaryStreetPaint); // Diag Highway
+    canvas.drawLine(const Offset(0, 300), const Offset(800, 340), primaryStreetPaint);
+    canvas.drawLine(const Offset(400, 0), const Offset(360, 800), primaryStreetPaint);
+    canvas.drawLine(const Offset(100, 100), const Offset(700, 700), primaryStreetPaint);
 
-    // Draw secondary street grids connecting blocks
     canvas.drawLine(const Offset(0, 120), const Offset(800, 120), secondaryStreetPaint);
     canvas.drawLine(const Offset(0, 520), const Offset(800, 520), secondaryStreetPaint);
     canvas.drawLine(const Offset(180, 0), const Offset(180, 800), secondaryStreetPaint);
     canvas.drawLine(const Offset(620, 0), const Offset(620, 800), secondaryStreetPaint);
-    
-    // Draw some curly block neighborhoods
+
     final neighborhoodA = Path()
       ..moveTo(480, 200)
       ..lineTo(580, 200)

@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
-import '../../models/facility.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:akses_tb/models/facility.dart';
+import 'package:akses_tb/services/faskes_service.dart';
 
 class FormFaskesScreen extends StatefulWidget {
-  final Facility? facility;
-  final Function(Facility) onSave;
+  final FaskesModel? facility;
 
   const FormFaskesScreen({
     super.key,
     this.facility,
-    required this.onSave,
   });
 
   @override
@@ -17,31 +18,57 @@ class FormFaskesScreen extends StatefulWidget {
 
 class _FormFaskesScreenState extends State<FormFaskesScreen> {
   final _formKey = GlobalKey<FormState>();
-  
+  final FacilityService _facilityService = FacilityService();
+
+  bool _isLoading = false;
+
+  // Controllers untuk text input
   late TextEditingController _nameController;
   late TextEditingController _phoneController;
   late TextEditingController _hoursController;
   late TextEditingController _latController;
   late TextEditingController _lngController;
   late TextEditingController _addressController;
-  
+  late TextEditingController _patientCountController;
+  late TextEditingController _openStatusController;
+  late TextEditingController _closeTimeController;
+  late TextEditingController _distanceController;
+
+  // State untuk dropdown dan boolean (switch)
   late String _selectedType;
   late String _selectedStatus;
-  late int _patientCount;
+  late bool _hasTCM;
+  late bool _hasOAT;
+
+  // Controller & State untuk Interactive Map Picker
+  GoogleMapController? _mapController;
+  late LatLng _selectedMapLocation;
 
   @override
   void initState() {
     super.initState();
+    // Default coordinate (Pusat Surabaya) atau koordinat eksisting faskes
+    final initialLat = widget.facility?.latitude ?? -7.2675;
+    final initialLng = widget.facility?.longitude ?? 112.7578;
+
+    _selectedMapLocation = LatLng(initialLat, initialLng);
+
     _nameController = TextEditingController(text: widget.facility?.name ?? '');
     _phoneController = TextEditingController(text: widget.facility?.phone ?? '');
     _hoursController = TextEditingController(text: widget.facility?.operatingHours ?? '');
-    _latController = TextEditingController(text: widget.facility?.latitude.toString() ?? '-7.250445');
-    _lngController = TextEditingController(text: widget.facility?.longitude.toString() ?? '112.768845');
+    _latController = TextEditingController(text: initialLat.toString());
+    _lngController = TextEditingController(text: initialLng.toString());
     _addressController = TextEditingController(text: widget.facility?.address ?? '');
-    
+
+    _patientCountController = TextEditingController(text: widget.facility?.patientCount.toString() ?? '0');
+    _openStatusController = TextEditingController(text: widget.facility?.openStatus ?? '');
+    _closeTimeController = TextEditingController(text: widget.facility?.closeTime ?? '');
+    _distanceController = TextEditingController(text: widget.facility?.distance.toString() ?? '0.0');
+
     _selectedType = widget.facility?.type ?? 'Puskesmas';
     _selectedStatus = widget.facility?.status ?? 'Aktif';
-    _patientCount = widget.facility?.patientCount ?? 85; // fallback mock patient count
+    _hasTCM = widget.facility?.hasTCM ?? false;
+    _hasOAT = widget.facility?.hasOAT ?? false;
   }
 
   @override
@@ -52,7 +79,193 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
     _latController.dispose();
     _lngController.dispose();
     _addressController.dispose();
+    _patientCountController.dispose();
+    _openStatusController.dispose();
+    _closeTimeController.dispose();
+    _distanceController.dispose();
+    _mapController?.dispose();
     super.dispose();
+  }
+
+  // Update map pin when user manually types in the lat/lng textfields
+  void _updateMapFromTextFields() {
+    final lat = double.tryParse(_latController.text.trim());
+    final lng = double.tryParse(_lngController.text.trim());
+    if (lat != null && lng != null) {
+      final newLoc = LatLng(lat, lng);
+      setState(() {
+        _selectedMapLocation = newLoc;
+      });
+      _mapController?.animateCamera(CameraUpdate.newLatLng(newLoc));
+    }
+  }
+
+  Future<void> _handleSave() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() {
+        _isLoading = true;
+      });
+
+      try {
+        final double parsedLat = double.tryParse(_latController.text.trim()) ?? 0.0;
+        final double parsedLng = double.tryParse(_lngController.text.trim()) ?? 0.0;
+        final double parsedDistance = double.tryParse(_distanceController.text.trim()) ?? 0.0;
+        final int parsedPatient = int.tryParse(_patientCountController.text.trim()) ?? 0;
+
+        final savedData = FaskesModel(
+          id: widget.facility?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+          name: _nameController.text.trim(),
+          type: _selectedType,
+          address: _addressController.text.trim(),
+          phone: _phoneController.text.trim(),
+          operatingHours: _hoursController.text.trim(),
+          latitude: parsedLat,
+          longitude: parsedLng,
+          patientCount: parsedPatient,
+          status: _selectedStatus,
+          isUpdated: true,
+          distance: parsedDistance,
+          hasTCM: _hasTCM,
+          hasOAT: _hasOAT,
+          openStatus: _openStatusController.text.trim(),
+          closeTime: _closeTimeController.text.trim(),
+        );
+
+        if (widget.facility != null) {
+          await _facilityService.updateFacility(savedData);
+        } else {
+          await _facilityService.createFacility(savedData);
+        }
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: const [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Data fasilitas berhasil disimpan!'),
+              ],
+            ),
+            backgroundColor: const Color(0xFF007B7A),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        Navigator.pop(context);
+
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Gagal menyimpan data: $e')),
+              ],
+            ),
+            backgroundColor: Colors.red.shade600,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
+    }
+  }
+
+  // Builder khusus untuk Map
+  Widget _buildMapPicker() {
+    final bool isMobile = !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
+
+    // Fallback jika tidak di mobile/tdk dukung Google Maps
+    if (!isMobile) {
+      return Container(
+        height: 180,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        alignment: Alignment.center,
+        child: const Text(
+          'Peta interaktif hanya tersedia di perangkat Mobile.',
+          style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+        ),
+      );
+    }
+
+    return Container(
+      height: 220,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: _selectedMapLocation,
+              zoom: 15.0,
+            ),
+            onMapCreated: (controller) => _mapController = controller,
+            markers: {
+              Marker(
+                markerId: const MarkerId('selected_location'),
+                position: _selectedMapLocation,
+                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+              ),
+            },
+            onTap: (LatLng location) {
+              setState(() {
+                _selectedMapLocation = location;
+                // Update text fields secara otomatis saat peta di-tap
+                _latController.text = location.latitude.toString();
+                _lngController.text = location.longitude.toString();
+              });
+              _mapController?.animateCamera(CameraUpdate.newLatLng(location));
+            },
+            zoomControlsEnabled: true,
+            myLocationButtonEnabled: false,
+            mapToolbarEnabled: false,
+          ),
+          // Instruksi mengambang di atas peta
+          Positioned(
+            top: 10,
+            left: 10,
+            right: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.9),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
+              ),
+              child: Row(
+                children: const [
+                  Icon(Icons.touch_app, size: 16, color: Color(0xFF007B7A)),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Ketuk area peta untuk menentukan titik koordinat otomatis.',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -69,7 +282,7 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          isEditMode ? 'Edit Faskes' : 'Kelola Faskes',
+          isEditMode ? 'Edit Faskes' : 'Tambah Faskes',
           style: const TextStyle(
             color: Color(0xFF007B7A),
             fontWeight: FontWeight.bold,
@@ -92,28 +305,16 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Nama Fasilitas',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF475569)),
-                    ),
-                    const SizedBox(height: 6),
-                    TextFormField(
+                    _buildLabel('Nama Fasilitas'),
+                    _buildTextField(
                       controller: _nameController,
-                      validator: (value) => value == null || value.trim().isEmpty ? 'Nama fasilitas tidak boleh kosong' : null,
-                      decoration: InputDecoration(
-                        hintText: 'Contoh: Puskesmas Rungkut',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      ),
+                      hint: 'Contoh: RSUD Dr. Soetomo',
+                      validatorMsg: 'Nama fasilitas tidak boleh kosong',
                     ),
                     const SizedBox(height: 16),
-                    const Text(
-                      'Tipe Fasilitas',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF475569)),
-                    ),
-                    const SizedBox(height: 6),
+                    _buildLabel('Tipe Fasilitas'),
                     DropdownButtonFormField<String>(
-                      initialValue: _selectedType,
+                      value: _selectedType,
                       decoration: InputDecoration(
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -121,13 +322,10 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
                       items: const [
                         DropdownMenuItem(value: 'Puskesmas', child: Text('Puskesmas')),
                         DropdownMenuItem(value: 'Rumah Sakit', child: Text('Rumah Sakit')),
+                        DropdownMenuItem(value: 'Klinik', child: Text('Klinik')),
                       ],
                       onChanged: (val) {
-                        if (val != null) {
-                          setState(() {
-                            _selectedType = val;
-                          });
-                        }
+                        if (val != null) setState(() => _selectedType = val);
                       },
                     ),
                   ],
@@ -135,85 +333,25 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
               ),
               const SizedBox(height: 18),
 
-              // 2. KONTAK INFO CARD
+              // 2. KONTAK & OPERASIONAL CARD
               _buildSectionCard(
-                icon: Icons.phone_outlined,
-                title: 'Kontak Info',
+                icon: Icons.access_time_outlined,
+                title: 'Kontak & Operasional',
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Nomor Telepon',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF475569)),
-                    ),
-                    const SizedBox(height: 6),
-                    TextFormField(
+                    _buildLabel('Nomor Telepon'),
+                    _buildTextField(
                       controller: _phoneController,
-                      validator: (value) => value == null || value.trim().isEmpty ? 'Nomor telepon tidak boleh kosong' : null,
-                      decoration: InputDecoration(
-                        hintText: '031-XXXXXXX',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      ),
+                      hint: 'Contoh: 031-5501078',
+                      validatorMsg: 'Nomor telepon wajib diisi',
                     ),
                     const SizedBox(height: 16),
-                    const Text(
-                      'Jam Operasional',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF475569)),
-                    ),
-                    const SizedBox(height: 6),
-                    TextFormField(
+                    _buildLabel('Jam Operasional (Rentang)'),
+                    _buildTextField(
                       controller: _hoursController,
-                      validator: (value) => value == null || value.trim().isEmpty ? 'Jam operasional tidak boleh kosong' : null,
-                      decoration: InputDecoration(
-                        hintText: 'Senin - Jumat, 08:00 - 15:00',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 18),
-
-              // 3. LOKASI & ALAMAT CARD
-              _buildSectionCard(
-                icon: Icons.location_on_outlined,
-                title: 'Lokasi & Alamat',
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Premium Map preview
-                    Container(
-                      height: 160,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        color: const Color(0xFFE2E8F0),
-                        image: const DecorationImage(
-                          image: NetworkImage('https://images.unsplash.com/photo-1524661135-423995f22d0b?q=80&w=600&auto=format&fit=crop'), // abstract cartography blueprint
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                      child: Stack(
-                        children: [
-                          // Overlay to make the map match the gorgeous blue-teal cartography in the mockup
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
-                              color: const Color.fromRGBO(0, 123, 122, 0.12),
-                            ),
-                          ),
-                          // Premium centered red location marker
-                          const Center(
-                            child: Icon(
-                              Icons.location_pin,
-                              color: Colors.redAccent,
-                              size: 44,
-                            ),
-                          ),
-                        ],
-                      ),
+                      hint: 'Contoh: 24 Jam atau Senin-Jumat',
+                      validatorMsg: 'Jam operasional wajib diisi',
                     ),
                     const SizedBox(height: 16),
                     Row(
@@ -222,17 +360,101 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'Latitude',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF475569)),
+                              _buildLabel('Status Buka'),
+                              _buildTextField(
+                                controller: _openStatusController,
+                                hint: 'Buka 24 Jam',
                               ),
-                              const SizedBox(height: 6),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildLabel('Jam Tutup'),
+                              _buildTextField(
+                                controller: _closeTimeController,
+                                hint: '-',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+
+              // 3. LAYANAN & DATA PASIEN CARD
+              _buildSectionCard(
+                icon: Icons.medical_services_outlined,
+                title: 'Layanan Medis & Data',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildLabel('Jumlah Pasien Aktif'),
+                    _buildTextField(
+                      controller: _patientCountController,
+                      hint: '0',
+                      keyboardType: TextInputType.number,
+                      validatorMsg: 'Jumlah pasien wajib diisi',
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _buildLabel('Tersedia Layanan TCM'),
+                        Switch(
+                          value: _hasTCM,
+                          activeColor: const Color(0xFF007B7A),
+                          onChanged: (val) => setState(() => _hasTCM = val),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _buildLabel('Tersedia Obat OAT'),
+                        Switch(
+                          value: _hasOAT,
+                          activeColor: const Color(0xFF007B7A),
+                          onChanged: (val) => setState(() => _hasOAT = val),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+
+              // 4. LOKASI & ALAMAT CARD
+              _buildSectionCard(
+                icon: Icons.location_on_outlined,
+                title: 'Lokasi Peta & Alamat',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // --- MAP PICKER ---
+                    _buildMapPicker(),
+                    const SizedBox(height: 20),
+
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildLabel('Latitude'),
                               TextFormField(
                                 controller: _latController,
                                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                validator: (value) => value == null || double.tryParse(value) == null ? 'Lintang tidak valid' : null,
+                                onChanged: (val) => _updateMapFromTextFields(),
+                                validator: (value) => value == null || value.trim().isEmpty ? 'Lintang tidak valid' : null,
                                 decoration: InputDecoration(
-                                  hintText: '-7.250445',
+                                  hintText: '-7.2675',
                                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                                 ),
@@ -245,17 +467,14 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'Longitude',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF475569)),
-                              ),
-                              const SizedBox(height: 6),
+                              _buildLabel('Longitude'),
                               TextFormField(
                                 controller: _lngController,
                                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                validator: (value) => value == null || double.tryParse(value) == null ? 'Bujur tidak valid' : null,
+                                onChanged: (val) => _updateMapFromTextFields(),
+                                validator: (value) => value == null || value.trim().isEmpty ? 'Bujur tidak valid' : null,
                                 decoration: InputDecoration(
-                                  hintText: '112.768845',
+                                  hintText: '112.7578',
                                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                                 ),
@@ -266,17 +485,20 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    const Text(
-                      'Alamat Lengkap',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF475569)),
+                    _buildLabel('Estimasi Jarak (Km)'),
+                    _buildTextField(
+                      controller: _distanceController,
+                      hint: '3.5',
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 16),
+                    _buildLabel('Alamat Lengkap'),
                     TextFormField(
                       controller: _addressController,
                       maxLines: 3,
-                      validator: (value) => value == null || value.trim().isEmpty ? 'Alamat lengkap tidak boleh kosong' : null,
+                      validator: (value) => value == null || value.trim().isEmpty ? 'Alamat lengkap wajib diisi' : null,
                       decoration: InputDecoration(
-                        hintText: 'Masukkan alamat lengkap fasilitas kesehatan...',
+                        hintText: 'Contoh: Jl. Mayjen Prof. Dr. Moestopo No.6-8...',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       ),
@@ -286,23 +508,20 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Status Switch (Optional hidden config to control status)
+              // 5. STATUS SISTEM CARD
               _buildSectionCard(
                 icon: Icons.verified_user_outlined,
-                title: 'Konfigurasi Sistem (Admin Only)',
+                title: 'Konfigurasi Sistem',
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Status Keaktifan Faskes',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF475569)),
-                    ),
+                    _buildLabel('Status Keaktifan Faskes'),
                     Switch(
                       value: _selectedStatus == 'Aktif',
-                      activeThumbColor: const Color(0xFF007B7A),
+                      activeColor: const Color(0xFF007B7A),
                       onChanged: (bool value) {
                         setState(() {
-                          _selectedStatus = value ? 'Aktif' : 'Perlu Review';
+                          _selectedStatus = value ? 'Aktif' : 'Nonaktif';
                         });
                       },
                     ),
@@ -315,7 +534,7 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
         ),
       ),
 
-      // Bottom bar with Cancel & Save buttons matching mockup
+      // Bottom bar
       bottomNavigationBar: Container(
         padding: const EdgeInsets.all(20.0),
         decoration: BoxDecoration(
@@ -333,7 +552,7 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
                     side: const BorderSide(color: Color(0xFF007B7A), width: 1.5),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: _isLoading ? null : () => Navigator.pop(context),
                   child: const Text(
                     'Batal',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
@@ -352,32 +571,17 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     elevation: 0,
                   ),
-                  onPressed: () {
-                    if (_formKey.currentState!.validate()) {
-                      final savedData = Facility(
-                        id: widget.facility?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
-                        name: _nameController.text.trim(),
-                        type: _selectedType,
-                        address: _addressController.text.trim(),
-                        phone: _phoneController.text.trim(),
-                        operatingHours: _hoursController.text.trim(),
-                        latitude: double.parse(_latController.text.trim()),
-                        longitude: double.parse(_lngController.text.trim()),
-                        patientCount: _patientCount,
-                        status: _selectedStatus,
-                        isUpdated: _selectedStatus == 'Aktif', // marked as updated if active
-                        // Carry forward guest parameters if editing
-                        distance: widget.facility?.distance ?? 1.5,
-                        hasTCM: widget.facility?.hasTCM ?? (_selectedType == 'Rumah Sakit'),
-                        hasOAT: widget.facility?.hasOAT ?? true,
-                        openStatus: widget.facility?.openStatus ?? (_selectedType == 'Rumah Sakit' ? 'Buka 24 Jam' : 'Buka'),
-                        closeTime: widget.facility?.closeTime ?? (_selectedType == 'Rumah Sakit' ? '-' : '14:00'),
-                      );
-                      widget.onSave(savedData);
-                      Navigator.pop(context);
-                    }
-                  },
-                  child: const Text(
+                  onPressed: _isLoading ? null : _handleSave,
+                  child: _isLoading
+                      ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2.5,
+                    ),
+                  )
+                      : const Text(
                     'Simpan Data',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
@@ -390,7 +594,40 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
     );
   }
 
-  // Card wrapper helper for modular sections
+  // Helper Widgets
+  Widget _buildLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        text,
+        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF475569)),
+      ),
+    );
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String hint,
+    String? validatorMsg,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      validator: (value) {
+        if (validatorMsg != null && (value == null || value.trim().isEmpty)) {
+          return validatorMsg;
+        }
+        return null;
+      },
+      decoration: InputDecoration(
+        hintText: hint,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      ),
+    );
+  }
+
   Widget _buildSectionCard({
     required IconData icon,
     required String title,
@@ -403,11 +640,11 @@ class _FormFaskesScreenState extends State<FormFaskesScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
-        boxShadow: [
+        boxShadow: const [
           BoxShadow(
-            color: const Color.fromRGBO(0, 0, 0, 0.01),
+            color: Color.fromRGBO(0, 0, 0, 0.01),
             blurRadius: 8,
-            offset: const Offset(0, 4),
+            offset: Offset(0, 4),
           ),
         ],
       ),

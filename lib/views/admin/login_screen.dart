@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // Tambahkan import ini
 
 class LoginAdminScreen extends StatefulWidget {
   final VoidCallback onLoginSuccess;
@@ -18,7 +19,7 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  
+
   bool _obscurePassword = true;
   bool _isLoading = false;
 
@@ -29,58 +30,82 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
     super.dispose();
   }
 
-  void _handleLogin() {
+  // Ubah fungsi menjadi async
+  Future<void> _handleLogin() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
       });
 
-      // Simulasi delay jaringan untuk UX premium
-      Future.delayed(const Duration(milliseconds: 1200), () {
+      final email = _emailController.text.trim();
+      final password = _passwordController.text;
+
+      try {
+        // Melakukan request login ke Firebase Auth
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+
+        // Pastikan widget masih aktif sebelum update UI
         if (!mounted) return;
 
-        setState(() {
-          _isLoading = false;
-        });
-
-        final email = _emailController.text.trim();
-        final password = _passwordController.text;
-
-        if (email == 'admin@aksestbc.gov.id' && password == 'admin123') {
-          // Login Sukses
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: const [
-                  Icon(Icons.check_circle, color: Colors.white),
-                  SizedBox(width: 8),
-                  Text('Login berhasil! Selamat datang Admin.'),
-                ],
-              ),
-              backgroundColor: const Color(0xFF007B7A),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        // Jika berhasil melewati 'await' di atas, berarti login sukses
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: const [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Login berhasil! Selamat datang Admin.'),
+              ],
             ),
-          );
-          widget.onLoginSuccess();
-        } else {
-          // Login Gagal
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: const [
-                  Icon(Icons.error_outline, color: Colors.white),
-                  SizedBox(width: 8),
-                  Text('Email atau kata sandi salah.'),
-                ],
-              ),
-              backgroundColor: Colors.red.shade600,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-          );
+            backgroundColor: const Color(0xFF007B7A),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+
+        widget.onLoginSuccess();
+
+      } on FirebaseAuthException catch (e) {
+        if (!mounted) return;
+
+        // Menangani berbagai jenis error dari Firebase
+        String errorMessage = 'Terjadi kesalahan saat login.';
+        if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
+          errorMessage = 'Email atau kata sandi salah.';
+        } else if (e.code == 'wrong-password') {
+          errorMessage = 'Kata sandi salah.';
+        } else if (e.code == 'invalid-email') {
+          errorMessage = 'Format email tidak valid.';
+        } else if (e.code == 'network-request-failed') {
+          errorMessage = 'Tidak ada koneksi internet.';
         }
-      });
+
+        // Tampilkan pesan error
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(child: Text(errorMessage)), // Gunakan Expanded agar teks panjang tidak overflow
+              ],
+            ),
+            backgroundColor: Colors.red.shade600,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      } finally {
+        // Matikan loading baik saat sukses maupun gagal
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
     }
   }
 
@@ -91,11 +116,11 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: widget.onBack != null 
+        leading: widget.onBack != null
             ? IconButton(
-                icon: const Icon(Icons.arrow_back, color: Color(0xFF1E293B)),
-                onPressed: widget.onBack,
-              )
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF1E293B)),
+          onPressed: widget.onBack,
+        )
             : const SizedBox(width: 16),
         titleSpacing: widget.onBack != null ? 0 : 20,
         title: const Text(
@@ -410,31 +435,31 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
                               ),
                               child: _isLoading
                                   ? const SizedBox(
-                                      width: 24,
-                                      height: 24,
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2.5,
-                                      ),
-                                    )
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2.5,
+                                ),
+                              )
                                   : Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: const [
-                                        Text(
-                                          'Login Admin',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            letterSpacing: 0.2,
-                                          ),
-                                        ),
-                                        SizedBox(width: 8),
-                                        Icon(
-                                          Icons.login,
-                                          size: 18,
-                                        ),
-                                      ],
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: const [
+                                  Text(
+                                    'Login Admin',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.2,
                                     ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Icon(
+                                    Icons.login,
+                                    size: 18,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                           const SizedBox(height: 24),

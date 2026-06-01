@@ -1,24 +1,22 @@
-class Facility {
+class FaskesModel {
   final String id;
   final String name;
-  final String type; // 'Puskesmas' or 'Rumah Sakit'
+  final String type;
   final String address;
   final String phone;
   final String operatingHours;
   final double latitude;
   final double longitude;
   final int patientCount;
-  final String status; // 'Aktif' or 'Perlu Review'
+  final String status;
   final bool isUpdated;
-
-  // Guest-specific fields with sensible defaults for dynamically added facilities
   final double distance;
   final bool hasTCM;
   final bool hasOAT;
   final String openStatus;
   final String closeTime;
 
-  Facility({
+  FaskesModel({
     required this.id,
     required this.name,
     required this.type,
@@ -30,49 +28,53 @@ class Facility {
     required this.patientCount,
     required this.status,
     required this.isUpdated,
-    this.distance = 1.5,
-    this.hasTCM = true,
-    this.hasOAT = true,
-    this.openStatus = 'Buka',
-    this.closeTime = '14:00',
+    required this.distance,
+    required this.hasTCM,
+    required this.hasOAT,
+    required this.openStatus,
+    required this.closeTime,
   });
 
-  // Helper copyWith method to allow clean immutable updates in state
-  Facility copyWith({
-    String? id,
-    String? name,
-    String? type,
-    String? address,
-    String? phone,
-    String? operatingHours,
-    double? latitude,
-    double? longitude,
-    int? patientCount,
-    String? status,
-    bool? isUpdated,
-    double? distance,
-    bool? hasTCM,
-    bool? hasOAT,
-    String? openStatus,
-    String? closeTime,
-  }) {
-    return Facility(
-      id: id ?? this.id,
-      name: name ?? this.name,
-      type: type ?? this.type,
-      address: address ?? this.address,
-      phone: phone ?? this.phone,
-      operatingHours: operatingHours ?? this.operatingHours,
-      latitude: latitude ?? this.latitude,
-      longitude: longitude ?? this.longitude,
-      patientCount: patientCount ?? this.patientCount,
-      status: status ?? this.status,
-      isUpdated: isUpdated ?? this.isUpdated,
-      distance: distance ?? this.distance,
-      hasTCM: hasTCM ?? this.hasTCM,
-      hasOAT: hasOAT ?? this.hasOAT,
-      openStatus: openStatus ?? this.openStatus,
-      closeTime: closeTime ?? this.closeTime,
+  // Mengubah data dari Firestore (Map) menjadi Objek Dart
+  factory FaskesModel.fromMap(String docId, Map<String, dynamic> map) {
+    return FaskesModel(
+      id: docId,
+      name: map['name'] ?? '',
+      type: map['type'] ?? '',
+      address: map['address'] ?? '',
+      phone: map['phone'] ?? '',
+      operatingHours: map['operatingHours'] ?? '',
+      latitude: (map['latitude'] as num).toDouble(),
+      longitude: (map['longitude'] as num).toDouble(),
+      patientCount: map['patientCount'] ?? 0,
+      status: map['status'] ?? '',
+      isUpdated: map['isUpdated'] ?? false,
+      distance: (map['distance'] as num).toDouble(),
+      hasTCM: map['hasTCM'] ?? false,
+      hasOAT: map['hasOAT'] ?? false,
+      openStatus: map['openStatus'] ?? '',
+      closeTime: map['closeTime'] ?? '',
     );
+  }
+
+  // Mengubah Objek Dart menjadi Map untuk disimpan ke Firestore
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'type': type,
+      'address': address,
+      'phone': phone,
+      'operatingHours': operatingHours,
+      'latitude': latitude,
+      'longitude': longitude,
+      'patientCount': patientCount,
+      'status': status,
+      'isUpdated': isUpdated,
+      'distance': distance,
+      'hasTCM': hasTCM,
+      'hasOAT': hasOAT,
+      'openStatus': openStatus,
+      'closeTime': closeTime,
+    };
   }
 }

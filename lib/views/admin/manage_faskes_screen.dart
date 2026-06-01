@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/facility.dart';
-import '../../services/faskes_service.dart';
+// Sesuaikan nama import service dengan yang kamu gunakan
+import 'package:akses_tb/services/faskes_service.dart';
 import '../guest/map_screen.dart';
 import 'form_faskes_screen.dart';
 
@@ -17,37 +18,15 @@ class ManageFaskesScreen extends StatefulWidget {
 }
 
 class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
-  final FaskesService _faskesService = FaskesService();
+  // Inisialisasi Firebase Service
+  final FacilityService _faskesService = FacilityService();
+
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   String _selectedTypeFilter = 'Semua'; // 'Semua', 'Puskesmas', 'Rumah Sakit'
-  late List<Facility> _facilities;
 
-  @override
-  void initState() {
-    super.initState();
-    _facilities = List.from(_faskesService.getFacilities());
-  }
-
-  // Filtering Logic
-  List<Facility> get _filteredFacilities {
-    return _facilities.where((f) {
-      final matchesSearch = f.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          f.address.toLowerCase().contains(_searchQuery.toLowerCase());
-      
-      final matchesType = _selectedTypeFilter == 'Semua' || f.type == _selectedTypeFilter;
-      
-      return matchesSearch && matchesType;
-    }).toList();
-  }
-
-  // Dashboard Stats Calculations
-  int get _totalFaskes => _facilities.length + 120; // Offset to match mockup stat (124 total with initial 4)
-  int get _activeFaskes => _facilities.where((f) => f.status == 'Aktif').length + 115; // Offset to match active stat (118 with 3 active initial)
-  int get _needsReviewFaskes => _facilities.where((f) => f.status == 'Perlu Review').length + 5; // Offset to match review stat (6 with 1 review initial)
-
-  // Dialog to delete facility
-  void _confirmDeleteFacility(BuildContext context, Facility faskes) {
+  // Fungsi hapus sekarang menjadi async
+  void _confirmDeleteFacility(BuildContext context, FaskesModel faskes) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -72,19 +51,29 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
-              onPressed: () {
-                _faskesService.deleteFacility(faskes.id);
-                setState(() {
-                  _facilities = List.from(_faskesService.getFacilities());
-                });
+              onPressed: () async {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: const Text('Fasilitas berhasil dihapus.'),
-                    backgroundColor: Colors.red.shade600,
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
+
+                try {
+                  await _faskesService.deleteFacility(faskes.id);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('Fasilitas berhasil dihapus.'),
+                      backgroundColor: Colors.red.shade600,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Gagal menghapus: $e'),
+                      backgroundColor: Colors.red.shade600,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
               },
               child: const Text('Hapus'),
             ),
@@ -94,8 +83,7 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
     );
   }
 
-  // Open Faskes in the internal interactive Map Screen
-  void _openInMaps(BuildContext context, Facility faskes) {
+  void _openInMaps(BuildContext context, FaskesModel faskes) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -108,7 +96,6 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
     );
   }
 
-  // Filter dialog Bottom Sheet matching mockup filters
   void _showFilterBottomSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -207,15 +194,12 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F9FC),
-
-      // AppBar matching Image 1 exactly
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0.5,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Color(0xFF007B7A)),
           onPressed: () {
-            // Confirmation dialog to logout
             showDialog(
               context: context,
               builder: (BuildContext context) {
@@ -259,7 +243,6 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
           ],
         ),
         actions: [
-          // Action chip to toggle back to Kelola Berita (News Dashboard)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 8.0),
             child: ActionChip(
@@ -276,7 +259,6 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                 ],
               ),
               onPressed: () {
-                // Smoothly pop and return to the main admin news dashboard
                 Navigator.pop(context);
               },
             ),
@@ -285,247 +267,250 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
         ],
       ),
 
-      body: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Title & Subtitle Section
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20.0, 24.0, 20.0, 16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Text(
-                    'Manajemen Fasilitas\nKesehatan',
+      body: StreamBuilder<List<FaskesModel>>(
+        stream: _faskesService.streamFacilities(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator(color: Color(0xFF007B7A)));
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text('Terjadi kesalahan: ${snapshot.error}'));
+          }
+
+          final allFacilities = snapshot.data ?? [];
+
+          // 1. Kalkulasi Data Riil dari Firestore
+          int totalFaskes = allFacilities.length;
+          int activeFaskes = allFacilities.where((f) => f.status == 'Aktif').length;
+
+          // Format waktu saat ini sebagai indikator "Update Terakhir"
+          String lastUpdateString = 'Hari ini,\n${TimeOfDay.now().format(context)}';
+
+          // 2. Logika Pencarian dan Filter
+          final filteredFacilities = allFacilities.where((f) {
+            final matchesSearch = f.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                f.address.toLowerCase().contains(_searchQuery.toLowerCase());
+            final matchesType = _selectedTypeFilter == 'Semua' || f.type == _selectedTypeFilter;
+            return matchesSearch && matchesType;
+          }).toList();
+
+          return SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20.0, 24.0, 20.0, 16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text(
+                        'Manajemen Fasilitas\nKesehatan',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F172A),
+                          height: 1.25,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'Kelola data Puskesmas dan Rumah Sakit rujukan TBC di Surabaya.',
+                        style: TextStyle(fontSize: 14, color: Color(0xFF475569)),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // 3. Stats Cards (Layout diperbarui untuk 3 Kartu)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildStatCard(
+                              icon: Icons.add_box,
+                              title: 'TOTAL FASKES',
+                              value: totalFaskes.toString(),
+                              color: const Color(0xFF007B7A),
+                              bgColor: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: _buildStatCard(
+                              icon: Icons.verified,
+                              title: 'FASKES AKTIF',
+                              value: activeFaskes.toString(),
+                              color: const Color(0xFF0D9488),
+                              bgColor: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      // Kartu Update Terakhir dibuat memanjang (full-width)
+                      _buildStatCard(
+                        icon: Icons.history,
+                        title: 'UPDATE TERAKHIR',
+                        value: lastUpdateString,
+                        color: const Color(0xFF64748B),
+                        bgColor: Colors.white,
+                        valueSize: 18,
+                        isFullWidth: true,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Search and Filter Bar Row
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          height: 50,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+                          ),
+                          child: TextField(
+                            controller: _searchController,
+                            onChanged: (val) {
+                              setState(() {
+                                _searchQuery = val;
+                              });
+                            },
+                            decoration: const InputDecoration(
+                              hintText: 'Cari nama Puskesmas atau RS...',
+                              hintStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+                              prefixIcon: Icon(Icons.search, color: Color(0xFF94A3B8)),
+                              border: InputBorder.none,
+                              contentPadding: EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      GestureDetector(
+                        onTap: () => _showFilterBottomSheet(context),
+                        child: Container(
+                          width: 50,
+                          height: 50,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+                          ),
+                          alignment: Alignment.center,
+                          child: const Icon(Icons.tune, color: Color(0xFF0F172A)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Daftar Fasilitas Heading
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20.0),
+                  child: Text(
+                    'Daftar Fasilitas',
                     style: TextStyle(
-                      fontSize: 28,
+                      fontSize: 18,
                       fontWeight: FontWeight.bold,
                       color: Color(0xFF0F172A),
-                      height: 1.25,
-                      letterSpacing: -0.5,
                     ),
                   ),
-                  SizedBox(height: 8),
-                  Text(
-                    'Kelola data Puskesmas dan Rumah Sakit rujukan TBC di Surabaya.',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF475569),
+                ),
+                const SizedBox(height: 14),
+
+                // List of Faskes Cards
+                filteredFacilities.isEmpty
+                    ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 40.0, horizontal: 20.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.local_hospital_outlined, size: 56, color: Colors.grey.shade400),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Tidak ada fasilitas kesehatan ditemukan.',
+                          style: TextStyle(fontSize: 15, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
+                )
+                    : ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                  itemCount: filteredFacilities.length,
+                  itemBuilder: (context, index) {
+                    final faskes = filteredFacilities[index];
+                    return _buildFacilityCard(context, faskes);
+                  },
+                ),
 
-            // 4 Stats Cards Grid Section
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0),
-              child: GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: 2,
-                crossAxisSpacing: 14,
-                mainAxisSpacing: 14,
-                childAspectRatio: 1.25,
-                children: [
-                  _buildStatCard(
-                    icon: Icons.add_box,
-                    title: 'TOTAL FASKES',
-                    value: _totalFaskes.toString(),
-                    color: const Color(0xFF007B7A),
-                    bgColor: Colors.white,
-                  ),
-                  _buildStatCard(
-                    icon: Icons.history,
-                    title: 'UPDATE TERAKHIR',
-                    value: 'Hari ini,\n08:30',
-                    color: const Color(0xFF64748B),
-                    bgColor: Colors.white,
-                    valueSize: 18,
-                  ),
-                  _buildStatCard(
-                    icon: Icons.verified,
-                    title: 'FASKES AKTIF',
-                    value: _activeFaskes.toString(),
-                    color: const Color(0xFF0D9488),
-                    bgColor: Colors.white,
-                  ),
-                  _buildStatCard(
-                    icon: Icons.warning,
-                    title: 'PERLU REVIEW',
-                    value: _needsReviewFaskes.toString(),
-                    color: Colors.red.shade700,
-                    bgColor: const Color(0xFFFEE2E2), // Light pink warning color as in mockup
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Search and Filter Bar Row
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
-                      ),
-                      child: TextField(
-                        controller: _searchController,
-                        onChanged: (val) {
-                          setState(() {
-                            _searchQuery = val;
-                          });
+                if (filteredFacilities.isNotEmpty)
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16.0),
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF475569),
+                          side: BorderSide(color: Colors.grey.shade300, width: 1),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                        ),
+                        onPressed: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Semua faskes telah ditampilkan.')),
+                          );
                         },
-                        decoration: const InputDecoration(
-                          hintText: 'Cari nama Puskesmas atau RS...',
-                          hintStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
-                          prefixIcon: Icon(Icons.search, color: Color(0xFF94A3B8)),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(vertical: 14),
+                        child: const Text(
+                          'Muat Lebih',
+                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  // Filter slider button
-                  GestureDetector(
-                    onTap: () => _showFilterBottomSheet(context),
-                    child: Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
-                      ),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.tune, color: Color(0xFF0F172A)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
 
-            // Daftar Fasilitas Heading
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20.0),
-              child: Text(
-                'Daftar Fasilitas',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF0F172A),
-                ),
-              ),
+                const SizedBox(height: 100),
+              ],
             ),
-            const SizedBox(height: 14),
-
-            // List of Faskes Cards
-            _filteredFacilities.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 40.0, horizontal: 20.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.local_hospital_outlined, size: 56, color: Colors.grey.shade400),
-                          const SizedBox(height: 14),
-                          Text(
-                            'Tidak ada fasilitas kesehatan ditemukan.',
-                            style: TextStyle(fontSize: 15, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                    itemCount: _filteredFacilities.length,
-                    itemBuilder: (context, index) {
-                      final faskes = _filteredFacilities[index];
-                      return _buildFacilityCard(context, faskes);
-                    },
-                  ),
-            
-            // Bottom "Muat Lebih" button
-            if (_filteredFacilities.isNotEmpty)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16.0),
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF475569),
-                      side: BorderSide(color: Colors.grey.shade300, width: 1),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-                    ),
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Semua faskes telah ditampilkan.')),
-                      );
-                    },
-                    child: const Text(
-                      'Muat Lebih',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                    ),
-                  ),
-                ),
-              ),
-            
-            const SizedBox(height: 100),
-          ],
-        ),
+          );
+        },
       ),
 
-      // Floating Action Button matching mockup
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 8.0, right: 4.0),
         child: FloatingActionButton.extended(
           elevation: 4,
-          backgroundColor: const Color(0xFF007B7A), // matching active button color in Image 1
+          backgroundColor: const Color(0xFF007B7A),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           onPressed: () {
-            // Navigate to Add Faskes Form
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => FormFaskesScreen(
-                  onSave: (newFacility) {
-                    _faskesService.addFacility(newFacility);
-                    setState(() {
-                      _facilities = List.from(_faskesService.getFacilities());
-                    });
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Fasilitas baru berhasil ditambahkan!'),
-                        backgroundColor: Color(0xFF007B7A),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
-                ),
+                builder: (context) => const FormFaskesScreen(),
               ),
             );
           },
           icon: const Icon(Icons.add, color: Colors.white, size: 24),
           label: const Text(
             'Tambah Faskes Baru',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-            ),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
           ),
         ),
       ),
@@ -533,7 +518,7 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
     );
   }
 
-  // Statistics Card Helper
+  // Modifikasi _buildStatCard untuk mendukung layout full-width opsional
   Widget _buildStatCard({
     required IconData icon,
     required String title,
@@ -541,9 +526,13 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
     required Color color,
     required Color bgColor,
     double valueSize = 28,
+    bool isFullWidth = false, // Parameter baru
   }) {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(16.0),
+      // Jika full-width, atur tinggi secukupnya agar tidak terlalu tebal
+      height: isFullWidth ? 90 : 130,
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(16),
@@ -556,7 +545,47 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
           ),
         ],
       ),
-      child: Column(
+      // Gunakan Row jika full-width agar icon ada di kiri dan teks di kanan
+      child: isFullWidth
+          ? Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12.0),
+            decoration: BoxDecoration(
+              color: color.withAlpha(25),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF64748B),
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value.replaceAll('\n', ' '), // Hapus enter agar lurus sebaris
+                style: TextStyle(
+                  fontSize: valueSize,
+                  fontWeight: FontWeight.bold,
+                  color: color == const Color(0xFF64748B) ? const Color(0xFF0F172A) : color,
+                ),
+              ),
+            ],
+          ),
+        ],
+      )
+          : Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -602,8 +631,7 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
     );
   }
 
-  // Facility Card Builder Helper matching Image 1
-  Widget _buildFacilityCard(BuildContext context, Facility faskes) {
+  Widget _buildFacilityCard(BuildContext context, FaskesModel faskes) {
     final isPuskesmas = faskes.type == 'Puskesmas';
 
     return Container(
@@ -633,7 +661,6 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Circle Icon (Light teal for Rumah Sakit, Light blue for Puskesmas)
                   Container(
                     width: 44,
                     height: 44,
@@ -649,8 +676,6 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                     ),
                   ),
                   const SizedBox(width: 14),
-
-                  // Title and Type Badge
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -670,7 +695,6 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            // Type Badge
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(
@@ -690,14 +714,9 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                           ],
                         ),
                         const SizedBox(height: 6),
-                        // Address text
                         Text(
                           faskes.address,
-                          style: const TextStyle(
-                            fontSize: 12.5,
-                            color: Color(0xFF64748B),
-                            height: 1.35,
-                          ),
+                          style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B), height: 1.35),
                         ),
                       ],
                     ),
@@ -705,15 +724,11 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                 ],
               ),
               const SizedBox(height: 14),
-
-              // Sub-row status details & Action icons
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Details
                   Row(
                     children: [
-                      // Patient count
                       const Icon(Icons.people_outline_rounded, size: 14, color: Color(0xFF64748B)),
                       const SizedBox(width: 4),
                       Text(
@@ -721,57 +736,27 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                         style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
                       ),
                       const SizedBox(width: 8),
-                      // Dot
-                      Text(
-                        '•',
-                        style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
-                      ),
+                      Text('•', style: TextStyle(fontSize: 11, color: Colors.grey.shade400)),
                       const SizedBox(width: 8),
-                      
-                      // Status check or Red warning icon
                       if (faskes.isUpdated) ...[
                         const Icon(Icons.verified_user, size: 14, color: Color(0xFF14B8A6)),
                         const SizedBox(width: 4),
-                        const Text(
-                          'Aktif',
-                          style: TextStyle(fontSize: 11, color: Color(0xFF14B8A6), fontWeight: FontWeight.bold),
-                        ),
+                        const Text('Aktif', style: TextStyle(fontSize: 11, color: Color(0xFF14B8A6), fontWeight: FontWeight.bold)),
                       ] else ...[
                         const Icon(Icons.info, size: 14, color: Colors.redAccent),
                         const SizedBox(width: 4),
-                        const Text(
-                          'Data Belum Update',
-                          style: TextStyle(fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.bold),
-                        ),
+                        const Text('Data Belum Update', style: TextStyle(fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.bold)),
                       ]
                     ],
                   ),
-
-                  // Action Edit & Delete circular buttons
                   Row(
                     children: [
                       GestureDetector(
                         onTap: () {
-                          // Navigate to Edit Faskes Form
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => FormFaskesScreen(
-                                facility: faskes,
-                                onSave: (updatedData) {
-                                  _faskesService.updateFacility(updatedData);
-                                  setState(() {
-                                    _facilities = List.from(_faskesService.getFacilities());
-                                  });
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Fasilitas berhasil diperbarui!'),
-                                      backgroundColor: Color(0xFF007B7A),
-                                      behavior: SnackBarBehavior.floating,
-                                    ),
-                                  );
-                                },
-                              ),
+                              builder: (context) => FormFaskesScreen(facility: faskes),
                             ),
                           );
                         },
