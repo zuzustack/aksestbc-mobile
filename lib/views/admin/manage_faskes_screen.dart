@@ -1,6 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../../models/facility.dart';
-// Sesuaikan nama import service dengan yang kamu gunakan
+// TODO: Sesuaikan path import service utama Anda
 import 'package:akses_tb/services/faskes_service.dart';
 import '../guest/map_screen.dart';
 import 'form_faskes_screen.dart';
@@ -18,14 +24,19 @@ class ManageFaskesScreen extends StatefulWidget {
 }
 
 class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
-  // Inisialisasi Firebase Service
   final FacilityService _faskesService = FacilityService();
+  final FaskesSyncService _syncService = FaskesSyncService();
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   String _selectedTypeFilter = 'Semua'; // 'Semua', 'Puskesmas', 'Rumah Sakit'
 
-  // Fungsi hapus sekarang menjadi async
+  // Batas maksimum data awal yang di-render di UI (Lazy Loading)
+  int _currentLimit = 10;
+
+  // State untuk indikator loading upload JSON
+  bool _isSyncing = false;
+
   void _confirmDeleteFacility(BuildContext context, FaskesModel faskes) {
     showDialog(
       context: context,
@@ -53,7 +64,6 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
               ),
               onPressed: () async {
                 Navigator.pop(context);
-
                 try {
                   await _faskesService.deleteFacility(faskes.id);
                   if (!mounted) return;
@@ -184,6 +194,7 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
           });
           setState(() {
             _selectedTypeFilter = label;
+            _currentLimit = 10; // Reset pagination limit saat filter berubah
           });
         }
       },
@@ -243,6 +254,30 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
           ],
         ),
         actions: [
+          // TOMBOL SINKRONISASI FILE JSON
+          _isSyncing
+              ? const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16.0),
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF007B7A)),
+            ),
+          )
+              : IconButton(
+            tooltip: 'Sinkronisasi File JSON',
+            icon: const Icon(Icons.cloud_upload_outlined, color: Color(0xFF007B7A)),
+            onPressed: () => _syncService.pickAndSyncJson(
+              context,
+                  (loading) {
+                setState(() {
+                  _isSyncing = loading;
+                });
+              },
+            ),
+          ),
+
+          // TOMBOL KELOLA BERITA
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 8.0),
             child: ActionChip(
@@ -283,17 +318,18 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
           // 1. Kalkulasi Data Riil dari Firestore
           int totalFaskes = allFacilities.length;
           int activeFaskes = allFacilities.where((f) => f.status == 'Aktif').length;
+          String lastUpdateString = 'Hari ini, ${TimeOfDay.now().format(context)}';
 
-          // Format waktu saat ini sebagai indikator "Update Terakhir"
-          String lastUpdateString = 'Hari ini,\n${TimeOfDay.now().format(context)}';
-
-          // 2. Logika Pencarian dan Filter
+          // 2. Filter data berdasarkan input pencarian dan tipe chip
           final filteredFacilities = allFacilities.where((f) {
             final matchesSearch = f.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
                 f.address.toLowerCase().contains(_searchQuery.toLowerCase());
             final matchesType = _selectedTypeFilter == 'Semua' || f.type == _selectedTypeFilter;
             return matchesSearch && matchesType;
           }).toList();
+
+          // 3. Potong List sesuai limit Lazy Loading saat ini
+          final displayedFacilities = filteredFacilities.take(_currentLimit).toList();
 
           return SingleChildScrollView(
             physics: const BouncingScrollPhysics(),
@@ -324,7 +360,7 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                   ),
                 ),
 
-                // 3. Stats Cards (Layout diperbarui untuk 3 Kartu)
+                // Statistik Row & Column Layout
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20.0),
                   child: Column(
@@ -353,7 +389,6 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                         ],
                       ),
                       const SizedBox(height: 14),
-                      // Kartu Update Terakhir dibuat memanjang (full-width)
                       _buildStatCard(
                         icon: Icons.history,
                         title: 'UPDATE TERAKHIR',
@@ -368,7 +403,7 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // Search and Filter Bar Row
+                // Search and Filter Bar
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20.0),
                   child: Row(
@@ -386,6 +421,7 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                             onChanged: (val) {
                               setState(() {
                                 _searchQuery = val;
+                                _currentLimit = 10; // Reset limit setiap kali mengetik pencarian baru
                               });
                             },
                             decoration: const InputDecoration(
@@ -418,22 +454,17 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // Daftar Fasilitas Heading
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20.0),
                   child: Text(
                     'Daftar Fasilitas',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0F172A),
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
                   ),
                 ),
                 const SizedBox(height: 14),
 
-                // List of Faskes Cards
-                filteredFacilities.isEmpty
+                // Render List Faskes yang sudah dipotong (displayedFacilities)
+                displayedFacilities.isEmpty
                     ? Center(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 40.0, horizontal: 20.0),
@@ -455,14 +486,15 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                  itemCount: filteredFacilities.length,
+                  itemCount: displayedFacilities.length,
                   itemBuilder: (context, index) {
-                    final faskes = filteredFacilities[index];
+                    final faskes = displayedFacilities[index];
                     return _buildFacilityCard(context, faskes);
                   },
                 ),
 
-                if (filteredFacilities.isNotEmpty)
+                // Tombol Muat Lebih Banyak (Hanya muncul jika item tersisa > dari limit yang tampil)
+                if (filteredFacilities.length > _currentLimit)
                   Center(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 16.0),
@@ -474,12 +506,12 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
                         ),
                         onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Semua faskes telah ditampilkan.')),
-                          );
+                          setState(() {
+                            _currentLimit += 15; // Tambahkan 15 item berikutnya ke layar
+                          });
                         },
                         child: const Text(
-                          'Muat Lebih',
+                          'Muat Lebih Banyak',
                           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                         ),
                       ),
@@ -518,7 +550,6 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
     );
   }
 
-  // Modifikasi _buildStatCard untuk mendukung layout full-width opsional
   Widget _buildStatCard({
     required IconData icon,
     required String title,
@@ -526,26 +557,20 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
     required Color color,
     required Color bgColor,
     double valueSize = 28,
-    bool isFullWidth = false, // Parameter baru
+    bool isFullWidth = false,
   }) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16.0),
-      // Jika full-width, atur tinggi secukupnya agar tidak terlalu tebal
       height: isFullWidth ? 90 : 130,
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: const Color.fromRGBO(0, 0, 0, 0.01),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
+        boxShadow: const [
+          BoxShadow(color: Color.fromRGBO(0, 0, 0, 0.01), blurRadius: 8, offset: Offset(0, 4)),
         ],
       ),
-      // Gunakan Row jika full-width agar icon ada di kiri dan teks di kanan
       child: isFullWidth
           ? Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -565,21 +590,12 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF64748B),
-                  letterSpacing: 0.5,
-                ),
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF64748B), letterSpacing: 0.5),
               ),
               const SizedBox(height: 4),
               Text(
-                value.replaceAll('\n', ' '), // Hapus enter agar lurus sebaris
-                style: TextStyle(
-                  fontSize: valueSize,
-                  fontWeight: FontWeight.bold,
-                  color: color == const Color(0xFF64748B) ? const Color(0xFF0F172A) : color,
-                ),
+                value,
+                style: TextStyle(fontSize: valueSize, fontWeight: FontWeight.bold, color: const Color(0xFF0F172A)),
               ),
             ],
           ),
@@ -607,22 +623,12 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
             children: [
               Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF64748B),
-                  letterSpacing: 0.5,
-                ),
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF64748B), letterSpacing: 0.5),
               ),
               const SizedBox(height: 4),
               Text(
                 value,
-                style: TextStyle(
-                  fontSize: valueSize,
-                  fontWeight: FontWeight.bold,
-                  color: color == const Color(0xFF64748B) ? const Color(0xFF0F172A) : color,
-                  height: 1.15,
-                ),
+                style: TextStyle(fontSize: valueSize, fontWeight: FontWeight.bold, color: color, height: 1.15),
               ),
             ],
           ),
@@ -640,12 +646,8 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: const Color.fromRGBO(0, 0, 0, 0.015),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
+        boxShadow: const [
+          BoxShadow(color: Color.fromRGBO(0, 0, 0, 0.015), blurRadius: 10, offset: Offset(0, 4)),
         ],
       ),
       clipBehavior: Clip.antiAlias,
@@ -686,12 +688,7 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
                             Expanded(
                               child: Text(
                                 faskes.name,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF0F172A),
-                                  height: 1.25,
-                                ),
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0F172A), height: 1.25),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -796,5 +793,139 @@ class _ManageFaskesScreenState extends State<ManageFaskesScreen> {
         ),
       ),
     );
+  }
+}
+
+// ==============================================================================
+// INTERNAL SERVICE LOGIC FOR BG PROCESS & WEB-COMPATIBLE FILE PROCESSING
+// ==============================================================================
+
+class FaskesSyncService {
+  final FaskesUploader _uploader = FaskesUploader();
+
+  Future<void> pickAndSyncJson(BuildContext context, Function(bool) onLoadingChanged) async {
+    // Membuka file picker khusus ekstensi .json dengan withData = true untuk support Flutter Web
+    FilePickerResult? result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: true,
+    );
+
+    if (result == null) return;
+
+    onLoadingChanged(true);
+
+    try {
+      String jsonString = '';
+
+      if (kIsWeb) {
+        final bytes = result.files.first.bytes;
+        if (bytes != null) {
+          jsonString = utf8.decode(bytes);
+        }
+      } else {
+        final path = result.files.first.path;
+        if (path != null) {
+          final file = File(path);
+          jsonString = await file.readAsString();
+        }
+      }
+
+      if (jsonString.trim().isEmpty) {
+        throw const FormatException('File JSON kosong atau tidak dapat dibaca.');
+      }
+
+      final List<dynamic> parsedJson = jsonDecode(jsonString);
+      final List<Map<String, dynamic>> rawJsonList = parsedJson
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+
+      await _uploader.uploadRawJsonToFirestore(rawJsonList);
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sinkronisasi Berhasil! Seluruh data faskes telah diperbarui.'),
+          backgroundColor: Color(0xFF007B7A),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal memproses file JSON: $e'),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      onLoadingChanged(false);
+    }
+  }
+}
+
+class FaskesUploader {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  Future<void> uploadRawJsonToFirestore(List<Map<String, dynamic>> rawJsonList) async {
+    const int batchSize = 500;
+    WriteBatch batch = _db.batch();
+    int count = 0;
+
+    try {
+      for (var item in rawJsonList) {
+        final String docId = item['kdppk']?.toString().trim() ??
+            DateTime.now().millisecondsSinceEpoch.toString() + count.toString();
+
+        final String name = item['nmppk']?.toString().trim() ?? '';
+        final String type = item['nmjnsppk']?.toString().trim() ?? 'Fasilitas Kesehatan';
+        final String address = item['nmjlnppk']?.toString().trim() ?? '-';
+        final String phone = item['telpppk']?.toString().trim() ?? '-';
+
+        final double lat = double.tryParse(item['latitude']?.toString() ?? '0.0') ?? 0.0;
+        final double lng = double.tryParse(item['longitude']?.toString() ?? '0.0') ?? 0.0;
+
+        final bool isRS = type.toLowerCase().contains('rumah sakit');
+        final String operatingHours = isRS ? '24 Jam' : '08:00 - 14:00';
+        final String openStatus = isRS ? 'Buka 24 Jam' : 'Buka';
+        final String closeTime = isRS ? '-' : '14:00';
+
+        final faskesData = FaskesModel(
+          id: docId,
+          name: name,
+          type: type,
+          address: address,
+          phone: phone,
+          operatingHours: operatingHours,
+          latitude: lat,
+          longitude: lng,
+          patientCount: 0,
+          status: 'Aktif',
+          isUpdated: true,
+          distance: 0.0,
+          hasTCM: isRS,
+          hasOAT: true,
+          openStatus: openStatus,
+          closeTime: closeTime,
+        );
+
+        DocumentReference docRef = _db.collection('fasilitas_kesehatan').doc(faskesData.id);
+        batch.set(docRef, faskesData.toMap());
+
+        count++;
+
+        if (count % batchSize == 0) {
+          await batch.commit();
+          batch = _db.batch();
+        }
+      }
+
+      if (count % batchSize != 0) {
+        await batch.commit();
+      }
+    } catch (e) {
+      rethrow;
+    }
   }
 }
