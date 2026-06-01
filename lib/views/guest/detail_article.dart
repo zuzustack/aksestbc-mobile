@@ -12,6 +12,7 @@ class DetailArticleScreen extends StatelessWidget {
   // Fungsi helper untuk membuka URL berita asli di browser HP pengguna
   Future<void> _launchURL(BuildContext context) async {
     final Uri url = Uri.parse(article.contentUrl);
+    final messenger = ScaffoldMessenger.of(context);
     try {
       if (await canLaunchUrl(url)) {
         await launchUrl(url, mode: LaunchMode.externalApplication);
@@ -19,7 +20,7 @@ class DetailArticleScreen extends StatelessWidget {
         throw 'Tidak dapat membuka tautan';
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(content: Text('Gagal membuka artikel asli: $e')),
       );
     }

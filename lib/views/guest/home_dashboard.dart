@@ -3,7 +3,12 @@ import 'package:flutter/material.dart';
 import 'map_screen.dart';
 
 class HomeDashboard extends StatelessWidget {
-  const HomeDashboard({super.key});
+  final VoidCallback? onProfilePressed;
+  
+  const HomeDashboard({
+    super.key,
+    this.onProfilePressed,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -24,6 +29,9 @@ class HomeDashboard extends StatelessWidget {
             ),
             onPressed: () {
               // Aksi menuju profil/login
+              if (onProfilePressed != null) {
+                onProfilePressed!();
+              }
             },
           )
         ],

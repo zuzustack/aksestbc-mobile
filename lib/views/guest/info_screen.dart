@@ -4,7 +4,12 @@ import '../../services/news_service.dart';
 import 'detail_article.dart';
 
 class InfoTbcScreen extends StatefulWidget {
-  const InfoTbcScreen({super.key});
+  final VoidCallback? onAdminLoginPressed;
+
+  const InfoTbcScreen({
+    super.key,
+    this.onAdminLoginPressed,
+  });
 
   @override
   State<InfoTbcScreen> createState() => _InfoTbcScreenState();
@@ -177,7 +182,11 @@ class _InfoTbcScreenState extends State<InfoTbcScreen> {
             // --- FOOTER ADMIN ---
             Center(
               child: TextButton.icon(
-                onPressed: () {},
+                onPressed: () {
+                  if (widget.onAdminLoginPressed != null) {
+                    widget.onAdminLoginPressed!();
+                  }
+                },
                 icon: const Icon(Icons.admin_panel_settings, color: Colors.grey, size: 16),
                 label: const Text('Admin Login', style: TextStyle(color: Colors.grey, fontSize: 12)),
               ),
