@@ -245,7 +245,7 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               ),
 
-              // --- LAYER 3: Panel Faskes Terdekat (Draggable Sheet) ---
+              // --- LAYER 3: Panel Faskes Terdekat (Draggable Sheet dengan Lazy Loading) ---
               DraggableScrollableSheet(
                 initialChildSize: 0.44,
                 minChildSize: 0.18,
@@ -263,106 +263,129 @@ class _MapScreenState extends State<MapScreen> {
                         )
                       ],
                     ),
-                    child: ListView(
+                    // MENGGUNAKAN CUSTOM SCROLL VIEW UNTUK LAZY LOADING
+                    child: CustomScrollView(
                       controller: scrollController,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                      children: [
-                        // Pull Handle bar
-                        Center(
-                          child: Container(
-                            width: 44,
-                            height: 5,
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade300,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-
-                        // Header Row with Filter Chip Switcher
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: const [
-                                Text(
-                                  'Faskes Terdekat',
-                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                      slivers: [
+                        // SLIVER 1: Header statis (Handle, Judul, Search)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                            child: Column(
+                              children: [
+                                // Pull Handle bar
+                                Center(
+                                  child: Container(
+                                    width: 44,
+                                    height: 5,
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade300,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
                                 ),
-                                SizedBox(height: 2),
-                                Text(
-                                  'Surabaya & Sekitarnya',
-                                  style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                                const SizedBox(height: 20),
+
+                                // Header Row with Filter Chip Switcher
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: const [
+                                        Text(
+                                          'Faskes Terdekat',
+                                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                                        ),
+                                        SizedBox(height: 2),
+                                        Text(
+                                          'Surabaya & Sekitarnya',
+                                          style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                                        ),
+                                      ],
+                                    ),
+                                    // Quick filter button
+                                    TextButton.icon(
+                                      onPressed: () => _showFilterDialog(),
+                                      icon: const Icon(Icons.filter_alt_outlined, color: Color(0xFF007B7A), size: 16),
+                                      label: Text(
+                                        _selectedTypeFilter == 'Semua' ? 'Filter' : _selectedTypeFilter,
+                                        style: const TextStyle(color: Color(0xFF007B7A), fontWeight: FontWeight.bold, fontSize: 13),
+                                      ),
+                                    )
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+
+                                // Search input
+                                Container(
+                                  height: 44,
+                                  margin: const EdgeInsets.only(bottom: 16),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF1F5F9),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: TextField(
+                                    onChanged: (val) {
+                                      setState(() {
+                                        _searchQuery = val;
+                                      });
+                                    },
+                                    decoration: const InputDecoration(
+                                      hintText: 'Cari faskes atau kecamatan...',
+                                      hintStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                                      prefixIcon: Icon(Icons.search, color: Color(0xFF94A3B8), size: 18),
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.symmetric(vertical: 11),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
-                            // Quick filter button
-                            TextButton.icon(
-                              onPressed: () => _showFilterDialog(),
-                              icon: const Icon(Icons.filter_alt_outlined, color: Color(0xFF007B7A), size: 16),
-                              label: Text(
-                                _selectedTypeFilter == 'Semua' ? 'Filter' : _selectedTypeFilter,
-                                style: const TextStyle(color: Color(0xFF007B7A), fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
-                            )
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-
-                        // Search input
-                        Container(
-                          height: 44,
-                          margin: const EdgeInsets.only(bottom: 16),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF1F5F9),
-                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child: TextField(
-                            onChanged: (val) {
-                              setState(() {
-                                _searchQuery = val;
-                              });
-                            },
-                            decoration: const InputDecoration(
-                              hintText: 'Cari faskes atau kecamatan...',
-                              hintStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
-                              prefixIcon: Icon(Icons.search, color: Color(0xFF94A3B8), size: 18),
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(vertical: 11),
+                        ),
+
+                        // SLIVER 2: Kondisi Kosong
+                        if (filteredFacilities.isEmpty)
+                          const SliverToBoxAdapter(
+                            child: Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(40.0),
+                                child: Text('Tidak ada Faskes ditemukan', style: TextStyle(color: Colors.grey)),
+                              ),
+                            ),
+                          )
+                        // SLIVER 3: LAZY LOAD LIST ITEMS
+                        else
+                          SliverPadding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            sliver: SliverList(
+                              delegate: SliverChildBuilderDelegate(
+                                    (context, index) {
+                                  final faskes = filteredFacilities[index];
+                                  final isSelected = _selectedFacility?.id == faskes.id;
+
+                                  return InkWell(
+                                    onTap: () => _onFacilitySelected(faskes),
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Container(
+                                      margin: const EdgeInsets.only(bottom: 14.0),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(
+                                          color: isSelected ? const Color(0xFF007B7A) : Colors.grey.shade200,
+                                          width: isSelected ? 2.0 : 1.0,
+                                        ),
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      child: _buildFacilityCard(faskes),
+                                    ),
+                                  );
+                                },
+                                // Beritahu Flutter jumlah total datanya
+                                childCount: filteredFacilities.length,
+                              ),
                             ),
                           ),
-                        ),
-
-                        // Facility Cards Mapping
-                        filteredFacilities.isEmpty
-                            ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(40.0),
-                            child: Text('Tidak ada Faskes ditemukan'),
-                          ),
-                        )
-                            : Column(
-                          children: filteredFacilities.map((faskes) {
-                            final isSelected = _selectedFacility?.id == faskes.id;
-                            return InkWell(
-                              onTap: () => _onFacilitySelected(faskes),
-                              borderRadius: BorderRadius.circular(16),
-                              child: Container(
-                                margin: const EdgeInsets.only(bottom: 14.0),
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: isSelected ? const Color(0xFF007B7A) : Colors.grey.shade200,
-                                    width: isSelected ? 2.0 : 1.0,
-                                  ),
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: _buildFacilityCard(faskes),
-                              ),
-                            );
-                          }).toList(),
-                        ),
                       ],
                     ),
                   );
@@ -375,7 +398,7 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // A. GOOGLE MAPS BUILDER (Menggunakan parameter facilities dari Stream)
+  // A. GOOGLE MAPS BUILDER
   Widget _buildGoogleMapsView(List<FaskesModel> facilities) {
     final bool isMobile = !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android);
     if (!isMobile) {
@@ -448,7 +471,7 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // B. HIGH-FIDELITY VECTOR MAP BUILDER (Menggunakan parameter facilities dari Stream)
+  // B. HIGH-FIDELITY VECTOR MAP BUILDER
   Widget _buildInteractiveVectorMapView(List<FaskesModel> facilities) {
     const double mapSize = 800.0;
 
